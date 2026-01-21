@@ -1,0 +1,23 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+.idea/
+*.sln
+*.xcodeproj
+*.xcworkspace
+
+# Build artifacts
+Build/*/FileOpenOrder/
+Build/
+Plugins/
+Platforms/
+# Logs, temp
+*.log
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
