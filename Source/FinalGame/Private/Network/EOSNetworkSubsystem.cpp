@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "EOSNetworkSubsystem.h"
+#include "Network/EOSNetworkSubsystem.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemUtils.h"
 
@@ -34,7 +34,7 @@ void UEOSNetworkSubsystem::StartServerEOS()
 	if (!IdentityInterface.IsValid()) return;
 
 	FOnlineAccountCredentials Credentials;
-	Credentials.Type = TEXT("accountportal"); 
+	Credentials.Type = TEXT("accountportal");
 
 	IdentityInterface->AddOnLoginCompleteDelegate_Handle(0,
 		FOnLoginCompleteDelegate::CreateUObject(this, &ThisClass::OnServerLoginComplete));
@@ -51,7 +51,7 @@ void UEOSNetworkSubsystem::OnServerLoginComplete(int32 LocalUserNum, bool bWasSu
 	}
 	else
 	{
-		UE_LOG(LogTemp, Error, TEXT("SERVEUR : Échec de l'authentification : %s"), *Error);
+		UE_LOG(LogTemp, Error, TEXT("SERVEUR : Écheccc de l'authentification : %s"), *Error);
 	}
 }
 void UEOSNetworkSubsystem::LoginWithDevAuth()

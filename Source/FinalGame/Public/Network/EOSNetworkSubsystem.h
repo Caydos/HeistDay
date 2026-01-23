@@ -9,7 +9,7 @@
 #include "EOSNetworkSubsystem.generated.h"
 
 /**
- * 
+ *
  */
 UCLASS()
 class FINALGAME_API UEOSNetworkSubsystem : public UGameInstanceSubsystem
@@ -17,7 +17,7 @@ class FINALGAME_API UEOSNetworkSubsystem : public UGameInstanceSubsystem
 	GENERATED_BODY()
 
 public:
-	
+
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 
 	// Login with Dev Auth Tool
@@ -33,4 +33,3 @@ private:
 	// Online Identity Interface pointer
 	IOnlineIdentityPtr IdentityInterface;
 };
-	

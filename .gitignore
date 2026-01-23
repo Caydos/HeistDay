@@ -21,3 +21,9 @@ Platforms/
 # OS
 .DS_Store
 Thumbs.db
+
+# Ton dossier de build spécifique
+HeistDay_Build/
+
+# Fichiers de projet utilisateur
+*.uproject.user
