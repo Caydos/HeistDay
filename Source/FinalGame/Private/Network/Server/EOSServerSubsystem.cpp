@@ -1,65 +1,61 @@
-//#include "Network/Server/EOSServerSubsystem.h"
-//#include "Network/Client/EOSIdentitySubsystem.h"
-//
-//using namespace UE::Online;
-//
-//bool UEOSServerSubsystem::ShouldCreateSubsystem(UObject* Outer) const
-//{
-//	return !IsRunningClientOnly(); // Autorisé pour Listen Server / Dedicated Server
-//}
-//
-//void UEOSServerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
-//{
-//	Super::Initialize(Collection);
-//}
-//
-//void UEOSServerSubsystem::StartServerEOS()
-//{
-//	CreateEOSSession();
-//}
-//
-//void UEOSServerSubsystem::CreateEOSSession()
-//{
-//	IOnlineServicesPtr Services = GetServices();
-//	if (!Services) return;
-//
-//	ISessionsPtr Sessions = Services->GetSessionsInterface();
-//	if (!Sessions) return;
-//
-//	UEOSIdentitySubsystem* IdentitySubsystem = GetGameInstance()->GetSubsystem<UEOSIdentitySubsystem>();
-//
-//	FCreateSession::Params Params;
-//	Params.SessionName = FName(TEXT("MainServerSession"));
-//
-//	// --- CORRECTIONS OSSv2 ---
-//	// 1. Les paramètres généraux vont directement dans "Params" (Pas de SessionSettings ici !)
-//	Params.bIsLANSession = false;
-//	Params.bPresenceEnabled = true;
-//
-//	// 2. Les règles de la session vont dans "SessionSettings"
-//	Params.SessionSettings.NumMaxConnections = 16;
-//	Params.SessionSettings.bAllowNewMembers = true; // Remplace bAllowJoinInProgress
-//	Params.SessionSettings.JoinPolicy = UE::Online::ESessionJoinPolicy::Public; // Définit l'ouverture du serveur
-//
-//	if (IdentitySubsystem && IdentitySubsystem->IsLoggedIn())
-//	{
-//		Params.LocalAccountId = IdentitySubsystem->GetLocalAccountId();
-//	}
-//
-//	UE_LOG(LogTemp, Warning, TEXT("EOSServerSubsystem: Création de la Session OSSv2..."));
-//	Sessions->CreateSession(MoveTemp(Params)).OnComplete(this, &UEOSServerSubsystem::OnCreateSessionComplete);
-//}
-//
-//void UEOSServerSubsystem::OnCreateSessionComplete(const UE::Online::TOnlineResult<UE::Online::FCreateSession>& Result)
-//{
-//	if (Result.IsOk())
-//	{
-//		// CORRECTION : Le Result est vide, on se fie juste au succès de l'opération !
-//		UE_LOG(LogTemp, Warning, TEXT("EOSServerSubsystem: Session créée avec succès (Nom: MainServerSession) !"));
-//		bHasInitializedServer = true;
-//	}
-//	else
-//	{
-//		UE_LOG(LogTemp, Error, TEXT("EOSServerSubsystem: Échec de création de session: %s"), *Result.GetErrorValue().GetLogString());
-//	}
-//}
+#include "Network/Server/EOSServerSubsystem.h"
+#include "OnlineSubsystem.h"
+#include "OnlineSessionSettings.h"
+
+void UEOSServerSubsystem::CreateServerSession()
+{
+	// Fetch the stable OSSv1 subsystem
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (!Subsystem)
+	{
+		UE_LOG(LogTemp, Error, TEXT("No OnlineSubsystem found!"));
+		return;
+	}
+
+	IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
+	if (!SessionInterface.IsValid())
+	{
+		UE_LOG(LogTemp, Error, TEXT("No Session Interface found!"));
+		return;
+	}
+
+	// Configure the Dedicated Server Session Settings
+	FOnlineSessionSettings SessionSettings;
+	SessionSettings.bIsLANMatch = false;
+	SessionSettings.bIsDedicated = true; // THIS is the magic flag OSSv2 is missing
+	SessionSettings.bShouldAdvertise = true;
+	SessionSettings.bAllowJoinInProgress = true;
+	SessionSettings.NumPublicConnections = 16;
+	SessionSettings.bUseLobbiesIfAvailable = false;
+	SessionSettings.bUsesPresence = false; // Servers don't have presence
+
+	// Set your BucketId so your OSSv2 clients can search for it!
+	SessionSettings.Set(FName("BucketId"), FString("DedicatedServer"), EOnlineDataAdvertisementType::ViaOnlineService);
+
+	// Bind our callback
+	SessionInterface->OnCreateSessionCompleteDelegates.AddUObject(this, &UEOSServerSubsystem::OnCreateSessionComplete);
+
+	UE_LOG(LogTemp, Log, TEXT("Attempting to Create Dedicated Server Session via OSSv1..."));
+
+	// Create the session (0 is safely ignored because bIsDedicated is true)
+	SessionInterface->CreateSession(0, FName("GameSession"), SessionSettings);
+}
+
+void UEOSServerSubsystem::OnCreateSessionComplete(FName SessionName, bool bWasSuccessful)
+{
+	// Clean up the delegate
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		Subsystem->GetSessionInterface()->ClearOnCreateSessionCompleteDelegates(this);
+	}
+
+	if (bWasSuccessful)
+	{
+		UE_LOG(LogTemp, Log, TEXT(">>> DEDICATED SERVER SESSION CREATED SUCCESSFULLY! <<<"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to create OSSv1 Session!"));
+	}
+}

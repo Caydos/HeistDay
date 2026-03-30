@@ -28,12 +28,18 @@ void UEOSIdentitySubsystem::LoginWithDevAuth()
 	LoginParams.PlatformUserId = FPlatformMisc::GetPlatformUserForUserIndex(0);
 
 	LoginParams.CredentialsType = LoginCredentialsType::Developer;
-	LoginParams.CredentialsId = TEXT("localhost:8081");
+	LoginParams.CredentialsId = TEXT("localhost:9000");
 	LoginParams.CredentialsToken.Set<FString>(DevAuthToken);
 
 	UE_LOG(LogTemp, Warning, TEXT("CLIENT (Identity OSSv2): Logging in with [%s]..."), *DevAuthToken);
 
-	Auth->Login(MoveTemp(LoginParams)).OnComplete(this, &UEOSIdentitySubsystem::OnLoginComplete);
+	// FIX: Use a lambda to capture 'this' and call OnLoginComplete
+	Auth->Login(MoveTemp(LoginParams)).OnComplete(
+		[this](const UE::Online::TOnlineResult<UE::Online::FAuthLogin>& Result)
+		{
+			OnLoginComplete(Result);
+		}
+	);
 }
 void UEOSIdentitySubsystem::OnLoginComplete(const TOnlineResult<FAuthLogin>& Result)
 {
