@@ -32,6 +32,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobby")
 	void NotifyLobbyStateChanged();
 
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobby")
+	TArray<FString> GetLobbyMemberNames();
+
 	// The Leader calls this to pull the whole lobby into the game
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobby")
 	void StartGame(FString ServerIP);
@@ -53,6 +56,8 @@ private:
 
 	// The new clean function to handle when the Leader broadcasts the Server IP
 	void OnLobbyAttributesUpdate(const UE::Online::FLobbyAttributesChanged& Event);
+
+	TSharedPtr<const UE::Online::FLobby> CachedLobbyObject;
 
 	// Pending Join Logic
 	void ProcessJoinLobby(UE::Online::FAccountId InLocalAccountId, UE::Online::FLobbyId InLobbyId);

@@ -1,7 +1,7 @@
 #include "Network/Client/EOSLobbySubsystem.h"
 #include "Network/Client/EOSIdentitySubsystem.h"
 #include <eos_presence_types.h>
-
+#include "Online/UserInfo.h"
 using namespace UE::Online;
 
 bool UEOSLobbySubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -34,33 +34,85 @@ void UEOSLobbySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 			AttributesChangedHandle = Lobbies->OnLobbyAttributesChanged().Add([this](const UE::Online::FLobbyAttributesChanged& Event) {
 				OnLobbyAttributesUpdate(Event);
 				});
+
+			//Lobbies->OnLobbyLeft().Add([this](const FLobbyLeft& Event) {
+			//	UE_LOG(LogTemp, Warning, TEXT("Local player has left the lobby. Resetting UI..."));
+
+			//	// Reset our local variables
+			//	CurrentLobbyId = UE::Online::FLobbyId();
+			//	CurrentPlayerCount = 0;
+
+			//	// Force the Blueprints to refresh and show "Empty" slots
+			//	NotifyLobbyStateChanged();
+			//	});
 		}
 	}
 }
+TArray<FString> UEOSLobbySubsystem::GetLobbyMemberNames()
+{
+	TArray<FString> Names;
 
+	// Use cached object 
+	if (CachedLobbyObject.IsValid())
+	{
+		IOnlineServicesPtr Services = GetServices();
+		IUserInfoPtr UserInfoInterface = Services->GetUserInfoInterface();
+		UEOSIdentitySubsystem* IdentitySubsystem = GetGameInstance()->GetSubsystem<UEOSIdentitySubsystem>();
+
+		if (UserInfoInterface && IdentitySubsystem)
+		{
+			for (const auto& Kvp : CachedLobbyObject->Members)
+			{
+				FGetUserInfo::Params UserParams;
+				UserParams.LocalAccountId = IdentitySubsystem->GetLocalAccountId();
+				UserParams.AccountId = Kvp.Key;
+
+				TOnlineResult<FGetUserInfo> UserResult = UserInfoInterface->GetUserInfo(MoveTemp(UserParams));
+				if (UserResult.IsOk())
+				{
+					Names.Add(UserResult.GetOkValue().UserInfo->DisplayName);
+				}
+				else
+				{
+					Names.Add(TEXT("Loading..."));
+				}
+			}
+		}
+	}
+
+	return Names;
+}
 void UEOSLobbySubsystem::OnLobbyAttributesUpdate(const UE::Online::FLobbyAttributesChanged& Event)
 {
 	FName ServerIPKey(TEXT("ServerIP"));
 	FString TargetIP = TEXT("");
 
-	// Check if the ServerIP was just added or changed by the leader
+	// Safely extract the IP whether it was just added or changed
 	if (Event.AddedAttributes.Contains(ServerIPKey))
 	{
+		// AddedAttributes maps directly to FSchemaVariant, so we call GetString() directly
 		TargetIP = Event.AddedAttributes[ServerIPKey].GetString();
 	}
 	else if (Event.ChangedAttributes.Contains(ServerIPKey))
 	{
+		// ChangedAttributes maps to an update struct, so we need .Value
 		TargetIP = Event.ChangedAttributes[ServerIPKey].Value.GetString();
 	}
 
-	// If we found a valid IP, execute the travel!
+	// If we found a valid IP, execute the travel AND attach the PartyID!
 	if (!TargetIP.IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Lobby Broadcast received! Travelling to server: %s"), *TargetIP);
+		// Convert our LobbyID to a string so the server knows we are a team
+		FString PartyIDString = UE::Online::ToLogString(CurrentLobbyId);
+
+		// Create the final URL: e.g. "10.0.7.4?PartyID=Lobby-12345"
+		FString TravelURL = FString::Printf(TEXT("%s?PartyID=%s"), *TargetIP, *PartyIDString);
+
+		UE_LOG(LogTemp, Warning, TEXT("Lobby Broadcast received! Travelling to server: %s"), *TravelURL);
 
 		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
 		{
-			PC->ClientTravel(TargetIP, TRAVEL_Absolute);
+			PC->ClientTravel(TravelURL, TRAVEL_Absolute);
 		}
 	}
 }
@@ -136,6 +188,10 @@ void UEOSLobbySubsystem::OnJoinLobbyComplete(const UE::Online::TOnlineResult<UE:
 			GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Green, TEXT("Successfully Joined Lobby!"));
 		}
 
+		CachedLobbyObject = Result.GetOkValue().Lobby; 
+		CurrentLobbyId = CachedLobbyObject->LobbyId;
+		CurrentPlayerCount = CachedLobbyObject->Members.Num();
+
 		NotifyLobbyStateChanged();
 	}
 	else
@@ -155,6 +211,8 @@ void UEOSLobbySubsystem::OnLobbyMemberJoined(const UE::Online::FLobbyMemberJoine
 		GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Cyan, JoinMsg);
 	}
 
+	CachedLobbyObject = Event.Lobby; 
+	CurrentPlayerCount = CachedLobbyObject->Members.Num();
 	NotifyLobbyStateChanged();
 }
 
@@ -229,6 +287,8 @@ void UEOSLobbySubsystem::LeaveLobby()
 				OnLeaveLobbyComplete(Result);
 			}
 		);
+
+
 	}
 }
 
@@ -249,17 +309,14 @@ void UEOSLobbySubsystem::StartGame(FString ServerIP)
 		UE_LOG(LogTemp, Log, TEXT("Leader is broadcasting Server IP to lobby..."));
 
 		Services->GetLobbiesInterface()->ModifyLobbyAttributes(MoveTemp(Params)).OnComplete(
-			[this, ServerIP](const UE::Online::TOnlineResult<UE::Online::FModifyLobbyAttributes>& Result)
+			[this](const UE::Online::TOnlineResult<UE::Online::FModifyLobbyAttributes>& Result)
 			{
 				if (Result.IsOk())
 				{
-					UE_LOG(LogTemp, Log, TEXT("Successfully broadcasted the Server IP! Hosting player travelling now."));
-
-					// Force the Host to travel too, in case EOS doesn't fire OnLobbyAttributesChanged for them
-					if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-					{
-						PC->ClientTravel(ServerIP, TRAVEL_Absolute);
-					}
+					// We DO NOT ClientTravel here anymore! 
+					// EOS will trigger OnLobbyAttributesUpdate for EVERYONE (including the leader),
+					// so we let that function handle the travel for everyone safely.
+					UE_LOG(LogTemp, Log, TEXT("Successfully broadcasted the Server IP!"));
 				}
 				else
 				{
@@ -274,9 +331,10 @@ void UEOSLobbySubsystem::OnLeaveLobbyComplete(const TOnlineResult<FLeaveLobby>& 
 {
 	CurrentLobbyId = UE::Online::FLobbyId();
 	CurrentPlayerCount = 0;
+	CachedLobbyObject.Reset();
 	NotifyLobbyStateChanged();
 
-	UE_LOG(LogTemp, Log, TEXT("Successfully left the lobby."));
+	UE_LOG(LogTemp, Log, TEXT("Successfully left the lobby."));	
 
 	if (bHasPendingJoin)
 	{
@@ -305,6 +363,8 @@ void UEOSLobbySubsystem::OnLobbyMemberLeft(const FLobbyMemberLeft& Event)
 
 		if (GEngine) GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Orange, PrintMsg);
 
+		CachedLobbyObject = Event.Lobby;
+		CurrentPlayerCount = CachedLobbyObject->Members.Num();
 		NotifyLobbyStateChanged();
 	}
 }
