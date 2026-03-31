@@ -7,10 +7,14 @@
 		{
 			"Name": "FinalGame",
 			"Type": "Runtime",
+<<<<<<< HEAD
 			"LoadingPhase": "Default",
 			"AdditionalDependencies": [
 				"Engine"
 			]
+=======
+			"LoadingPhase": "Default"
+>>>>>>> main
 		}
 	],
 	"Plugins": [
@@ -20,6 +24,7 @@
 			"TargetAllowList": [
 				"Editor"
 			]
+<<<<<<< HEAD
 		},
 		{
 			"Name": "OnlineServicesEOS",
@@ -28,6 +33,8 @@
 		{
 			"Name": "OnlineServicesEOSGS",
 			"Enabled": true
+=======
+>>>>>>> main
 		}
 	]
 }
