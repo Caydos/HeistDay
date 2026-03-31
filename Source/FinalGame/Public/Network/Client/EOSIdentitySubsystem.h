@@ -24,18 +24,15 @@ public:
 	UFUNCTION(BlueprintCallable)
 	bool IsLoggedIn() const { return bIsLoggedIn; }
 
-	// Retourne le nouvel identifiant de compte v2
 	UE::Online::FAccountId GetLocalAccountId() const { return LocalAccountId; }
 
 	UPROPERTY(BlueprintAssignable)
 	FOnLoginStateChangedDynamic OnLoginStateChanged;
 
 private:
-	// Fonction de rappel pour l'OSSv2
 	void OnLoginComplete(const UE::Online::TOnlineResult<UE::Online::FAuthLogin>& Result);
 
 	bool bIsLoggedIn = false;
 
-	// Stocke l'ID v2 du joueur
 	UE::Online::FAccountId LocalAccountId;
 };

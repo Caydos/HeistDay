@@ -33,7 +33,6 @@ void UEOSIdentitySubsystem::LoginWithDevAuth()
 
 	UE_LOG(LogTemp, Warning, TEXT("CLIENT (Identity OSSv2): Logging in with [%s]..."), *DevAuthToken);
 
-	// FIX: Use a lambda to capture 'this' and call OnLoginComplete
 	Auth->Login(MoveTemp(LoginParams)).OnComplete(
 		[this](const UE::Online::TOnlineResult<UE::Online::FAuthLogin>& Result)
 		{

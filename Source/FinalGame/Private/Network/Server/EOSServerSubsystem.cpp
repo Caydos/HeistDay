@@ -22,17 +22,15 @@ void UEOSServerSubsystem::CreateServerSession()
 	// Configure the Dedicated Server Session Settings
 	FOnlineSessionSettings SessionSettings;
 	SessionSettings.bIsLANMatch = false;
-	SessionSettings.bIsDedicated = true; // THIS is the magic flag OSSv2 is missing
+	SessionSettings.bIsDedicated = true; 
 	SessionSettings.bShouldAdvertise = true;
 	SessionSettings.bAllowJoinInProgress = true;
 	SessionSettings.NumPublicConnections = 16;
 	SessionSettings.bUseLobbiesIfAvailable = false;
 	SessionSettings.bUsesPresence = false; // Servers don't have presence
 
-	// Set your BucketId so your OSSv2 clients can search for it!
 	SessionSettings.Set(FName("BucketId"), FString("DedicatedServer"), EOnlineDataAdvertisementType::ViaOnlineService);
 
-	// Bind our callback
 	SessionInterface->OnCreateSessionCompleteDelegates.AddUObject(this, &UEOSServerSubsystem::OnCreateSessionComplete);
 
 	UE_LOG(LogTemp, Log, TEXT("Attempting to Create Dedicated Server Session via OSSv1..."));

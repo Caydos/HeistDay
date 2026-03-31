@@ -31,7 +31,6 @@ void UEOSLobbySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				OnLobbyJoinRequested(Event);
 				});
 
-			// Much cleaner binding!
 			AttributesChangedHandle = Lobbies->OnLobbyAttributesChanged().Add([this](const UE::Online::FLobbyAttributesChanged& Event) {
 				OnLobbyAttributesUpdate(Event);
 				});
@@ -164,7 +163,7 @@ void UEOSLobbySubsystem::Deinitialize()
 	MemberJoinedHandle.Unbind();
 	MemberLeftHandle.Unbind();
 	UIJoinRequestedHandle.Unbind();
-	AttributesChangedHandle.Unbind(); // <--- ADD THIS LINE
+	AttributesChangedHandle.Unbind(); 
 
 	Super::Deinitialize();
 }
@@ -187,7 +186,6 @@ void UEOSLobbySubsystem::CreateLobby()
 
 	UE_LOG(LogTemp, Warning, TEXT("EOSLobbySubsystem: Creating lobby..."));
 
-	// FIX: Use Lambda instead of standard delegate mapping
 	Services->GetLobbiesInterface()->CreateLobby(MoveTemp(Params)).OnComplete(
 		[this](const UE::Online::TOnlineResult<UE::Online::FCreateLobby>& Result)
 		{
@@ -225,7 +223,6 @@ void UEOSLobbySubsystem::LeaveLobby()
 		Params.LocalAccountId = IdentitySubsystem->GetLocalAccountId();
 		Params.LobbyId = CurrentLobbyId;
 
-		// FIX: Use Lambda instead of standard delegate mapping
 		Services->GetLobbiesInterface()->LeaveLobby(MoveTemp(Params)).OnComplete(
 			[this](const UE::Online::TOnlineResult<UE::Online::FLeaveLobby>& Result)
 			{

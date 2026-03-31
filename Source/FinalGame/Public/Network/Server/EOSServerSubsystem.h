@@ -11,7 +11,6 @@ class FINALGAME_API UEOSServerSubsystem : public UGameInstanceSubsystem
 	GENERATED_BODY()
 
 public:
-	// Your Blueprint node
 	UFUNCTION(BlueprintCallable, Category = "EOS Server")
 	void CreateServerSession();
 
