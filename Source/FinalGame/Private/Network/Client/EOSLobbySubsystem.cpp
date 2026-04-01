@@ -334,6 +334,8 @@ void UEOSLobbySubsystem::OnLeaveLobbyComplete(const TOnlineResult<FLeaveLobby>& 
 	CachedLobbyObject.Reset();
 	NotifyLobbyStateChanged();
 
+	OnLeaveLobbyFinished.Broadcast(Result.IsOk());
+
 	UE_LOG(LogTemp, Log, TEXT("Successfully left the lobby."));	
 
 	if (bHasPendingJoin)

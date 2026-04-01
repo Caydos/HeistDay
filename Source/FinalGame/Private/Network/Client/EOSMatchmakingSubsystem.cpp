@@ -1,66 +1,186 @@
-//#include "Network/Client/EOSMatchmakingSubsystem.h"
-//#include "OnlineSubsystem.h"
-//#include "OnlineSessionSettings.h"
-//
-//bool UEOSMatchmakingSubsystem::ShouldCreateSubsystem(UObject* Outer) const
-//{
-//	return !IsRunningDedicatedServer();
-//}
-//
-//void UEOSMatchmakingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
-//{
-//	Super::Initialize(Collection);
-//	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-//	if (Subsystem)
-//	{
-//		SessionInterface = Subsystem->GetSessionInterface();
-//	}
-//}
-//
-//void UEOSMatchmakingSubsystem::FindSessions()
-//{
-//	if (!SessionInterface.IsValid()) return;
-//
-//	LastSessionSearch = MakeShareable(new FOnlineSessionSearch());
-//	LastSessionSearch->MaxSearchResults = 20;
-//	LastSessionSearch->bIsLanQuery = false;
-//	LastSessionSearch->QuerySettings.Set(SEARCH_DEDICATED_ONLY, true, EOnlineComparisonOp::Equals);
-//	LastSessionSearch->QuerySettings.Set(FName(TEXT("PRESENCE")), false, EOnlineComparisonOp::Equals);
-//	LastSessionSearch->QuerySettings.Set(SETTING_MAPNAME, FString("HeistMap"), EOnlineComparisonOp::Equals);
-//
-//	SessionInterface->AddOnFindSessionsCompleteDelegate_Handle(
-//		FOnFindSessionsCompleteDelegate::CreateUObject(this, &UEOSMatchmakingSubsystem::OnFindSessionsComplete));
-//
-//	UE_LOG(LogTemp, Warning, TEXT("CLIENT (Matchmaking) : Recherche de serveurs dedies en cours..."));
-//	SessionInterface->FindSessions(0, LastSessionSearch.ToSharedRef());
-//}
-//
-//void UEOSMatchmakingSubsystem::OnFindSessionsComplete(bool bWasSuccessful)
-//{
-//	UE_LOG(LogTemp, Warning, TEXT("CLIENT (Matchmaking) : Recherche terminee."));
-//	SessionInterface->ClearOnFindSessionsCompleteDelegates(this);
-//}
-//
-//void UEOSMatchmakingSubsystem::JoinGameSession(int32 Index)
-//{
-//	if (!SessionInterface.IsValid() || !LastSessionSearch.IsValid()) return;
-//
-//	SessionInterface->AddOnJoinSessionCompleteDelegate_Handle(
-//		FOnJoinSessionCompleteDelegate::CreateUObject(this, &UEOSMatchmakingSubsystem::OnJoinSessionComplete));
-//
-//	SessionInterface->JoinSession(0, FName("MainSession"), LastSessionSearch->SearchResults[Index]);
-//}
-//
-//void UEOSMatchmakingSubsystem::OnJoinSessionComplete(FName SessionName, EOnJoinSessionCompleteResult::Type Result)
-//{
-//	if (Result == EOnJoinSessionCompleteResult::Success)
-//	{
-//		FString ConnectString;
-//		if (SessionInterface->GetResolvedConnectString(SessionName, ConnectString))
-//		{
-//			UE_LOG(LogTemp, Warning, TEXT("CLIENT (Matchmaking) : Travel vers %s"), *ConnectString);
-//		}
-//	}
-//	SessionInterface->ClearOnJoinSessionCompleteDelegates(this);
-//}
-//
+#include "Network/Client/EOSMatchmakingSubsystem.h"
+#include "Network/Client/EOSLobbySubsystem.h"
+#include "OnlineSubsystem.h"
+#include "Interfaces/OnlineSessionInterface.h"
+#include "OnlineSessionSettings.h"
+#include "Engine/World.h"
+#include "TimerManager.h"
+
+void UEOSMatchmakingSubsystem::FindMatch(int32 PartySize)
+{
+	CurrentPartySize = PartySize;
+	OnStatusChanged.Broadcast(TEXT("Searching for matches..."));
+	SearchForSession(PartySize);
+}
+
+void UEOSMatchmakingSubsystem::SearchForSession(int32 SlotsNeeded)
+{
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
+		if (SessionInterface.IsValid())
+		{
+			SessionSearch = MakeShareable(new FOnlineSessionSearch());
+			SessionSearch->bIsLanQuery = false;
+			SessionSearch->MaxSearchResults = 10;
+
+			SessionSearch->QuerySettings.Set(FName("PRESENCESEARCH"), true, EOnlineComparisonOp::Equals);
+			SessionSearch->QuerySettings.Set(FName("GameMode"), FString("2v2"), EOnlineComparisonOp::Equals);
+
+			SessionInterface->OnFindSessionsCompleteDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnSearchCompleted);
+			SessionInterface->FindSessions(0, SessionSearch.ToSharedRef());
+		}
+	}
+}
+
+void UEOSMatchmakingSubsystem::OnSearchCompleted(bool bWasSuccessful)
+{
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		Subsystem->GetSessionInterface()->ClearOnFindSessionsCompleteDelegates(this);
+	}
+
+	if (bWasSuccessful && SessionSearch.IsValid() && SessionSearch->SearchResults.Num() > 0)
+	{
+		OnStatusChanged.Broadcast(TEXT("Match found! Joining..."));
+		JoinFoundSession(SessionSearch->SearchResults[0]);
+	}
+	else
+	{
+		OnStatusChanged.Broadcast(TEXT("No match found. Hosting new session..."));
+		CreateMatchmakingSession(CurrentPartySize);
+	}
+}
+
+void UEOSMatchmakingSubsystem::CreateMatchmakingSession(int32 SlotsNeeded)
+{
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
+		if (SessionInterface.IsValid())
+		{
+			FOnlineSessionSettings SessionSettings;
+
+			SessionSettings.bIsLANMatch = false;
+			SessionSettings.bShouldAdvertise = true;
+			SessionSettings.bAllowJoinInProgress = true;
+			SessionSettings.NumPublicConnections = 4;
+			SessionSettings.bUsesPresence = true;
+			SessionSettings.bAllowJoinViaPresence = true;
+			SessionSettings.bUseLobbiesIfAvailable = false;
+
+			SessionSettings.Set(FName("GameMode"), FString("2v2"), EOnlineDataAdvertisementType::ViaOnlineService);
+
+			SessionInterface->OnCreateSessionCompleteDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnCreateCompleted);
+			SessionInterface->CreateSession(0, FName("MyMatchSession"), SessionSettings);
+		}
+	}
+}
+
+void UEOSMatchmakingSubsystem::OnCreateCompleted(FName SessionName, bool bWasSuccessful)
+{
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
+		SessionInterface->ClearOnCreateSessionCompleteDelegates(this);
+
+		if (bWasSuccessful)
+		{
+			OnStatusChanged.Broadcast(TEXT("Waiting for opponent..."));
+
+			// HOST LOGIC: Start checking the session size every 2 seconds
+			if (GetWorld())
+			{
+				GetWorld()->GetTimerManager().SetTimer(PollingTimer, this, &UEOSMatchmakingSubsystem::PollSessionSize, 2.0f, true);
+			}
+		}
+		else
+		{
+			OnStatusChanged.Broadcast(TEXT("Failed to create session!"));
+		}
+	}
+}
+
+void UEOSMatchmakingSubsystem::JoinFoundSession(const FOnlineSessionSearchResult& SearchResult)
+{
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
+		if (SessionInterface.IsValid())
+		{
+			SessionInterface->OnJoinSessionCompleteDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnJoinCompleted);
+			SessionInterface->JoinSession(0, FName("MyMatchSession"), SearchResult);
+		}
+	}
+}
+
+void UEOSMatchmakingSubsystem::OnJoinCompleted(FName SessionName, EOnJoinSessionCompleteResult::Type Result)
+{
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		Subsystem->GetSessionInterface()->ClearOnJoinSessionCompleteDelegates(this);
+	}
+
+	if (Result == EOnJoinSessionCompleteResult::Success)
+	{
+		// JOINER LOGIC: Teleport immediately upon successfully joining
+		OnStatusChanged.Broadcast(TEXT("Match Joined! Traveling..."));
+
+		FString ServerIP = TEXT("10.0.7.4");
+		UEOSLobbySubsystem* Lobby = GetGameInstance()->GetSubsystem<UEOSLobbySubsystem>();
+		if (Lobby)
+		{
+			Lobby->StartGame(ServerIP);
+		}
+	}
+	else
+	{
+		OnStatusChanged.Broadcast(TEXT("Failed to join match."));
+	}
+}
+
+void UEOSMatchmakingSubsystem::PollSessionSize()
+{
+	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
+	if (Subsystem)
+	{
+		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
+		if (SessionInterface.IsValid())
+		{
+			// Read the live data from the session
+			FNamedOnlineSession* Session = SessionInterface->GetNamedSession(FName("MyMatchSession"));
+
+			// CHANGED: Now it waits until the session is completely full (4 players)
+			if (Session && Session->RegisteredPlayers.Num() >= 4)
+			{
+				// Stop checking!
+				if (GetWorld())
+				{
+					GetWorld()->GetTimerManager().ClearTimer(PollingTimer);
+				}
+
+				OnStatusChanged.Broadcast(TEXT("Lobby is full! Match is starting..."));
+
+				// Teleport the Host!
+				FString ServerIP = TEXT("10.0.7.4");
+				UEOSLobbySubsystem* Lobby = GetGameInstance()->GetSubsystem<UEOSLobbySubsystem>();
+				if (Lobby)
+				{
+					Lobby->StartGame(ServerIP);
+				}
+			}
+			else if (Session)
+			{
+				// Update the UI text dynamically while we wait
+				FString Status = FString::Printf(TEXT("Waiting for players (%d/4)..."), Session->RegisteredPlayers.Num());
+				OnStatusChanged.Broadcast(Status);
+			}
+		}
+	}
+}

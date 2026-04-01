@@ -6,7 +6,7 @@
 #include "EOSLobbySubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLobbyStateChanged);
-
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLeaveLobbyFinished, bool, bWasSuccessful);
 UCLASS()
 class FINALGAME_API UEOSLobbySubsystem : public UGameInstanceSubsystem
 {
@@ -42,6 +42,9 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobby")
 	FOnLobbyStateChanged OnLobbyStateChanged;
 
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobby")
+	FOnLeaveLobbyFinished OnLeaveLobbyFinished;
+
 private:
 	void OnCreateLobbyComplete(const UE::Online::TOnlineResult<UE::Online::FCreateLobby>& Result);
 	void OnLeaveLobbyComplete(const UE::Online::TOnlineResult<UE::Online::FLeaveLobby>& Result);
@@ -56,6 +59,8 @@ private:
 
 	// The new clean function to handle when the Leader broadcasts the Server IP
 	void OnLobbyAttributesUpdate(const UE::Online::FLobbyAttributesChanged& Event);
+
+
 
 	TSharedPtr<const UE::Online::FLobby> CachedLobbyObject;
 
