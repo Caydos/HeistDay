@@ -1,6 +1,7 @@
 # Unreal Engine
 Binaries/
 DerivedDataCache/
+Windows/
 Intermediate/
 Saved/
 .vs/
@@ -18,6 +19,25 @@ Platforms/
 *.log
 *.tmp
 
+# Packaged files
+*.pak
+*.ucas
+*.utoc
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Ton dossier de build spécifique
+HeistDay_Build/
+
+# Fichiers de projet utilisateur
+*.uproject.user
+
+# Scripts locaux a la racine (Serveur/Client)
+/*.bat
+
+# Executables
+*.exe
+
+BuildServer/
