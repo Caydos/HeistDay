@@ -129,14 +129,11 @@ void UEOSMatchmakingSubsystem::OnJoinCompleted(FName SessionName, EOnJoinSession
 
 	if (Result == EOnJoinSessionCompleteResult::Success)
 	{
-		// JOINER LOGIC: Teleport immediately upon successfully joining
-		OnStatusChanged.Broadcast(TEXT("Match Joined! Traveling..."));
-
-		FString ServerIP = TEXT("10.0.7.4");
-		UEOSLobbySubsystem* Lobby = GetGameInstance()->GetSubsystem<UEOSLobbySubsystem>();
-		if (Lobby)
+		// JOINER LOGIC: Do NOT teleport! 
+		// Instead, start the polling timer just like the Host did.
+		if (GetWorld())
 		{
-			Lobby->StartGame(ServerIP);
+			GetWorld()->GetTimerManager().SetTimer(PollingTimer, this, &UEOSMatchmakingSubsystem::PollSessionSize, 2.0f, true);
 		}
 	}
 	else
@@ -156,30 +153,38 @@ void UEOSMatchmakingSubsystem::PollSessionSize()
 			// Read the live data from the session
 			FNamedOnlineSession* Session = SessionInterface->GetNamedSession(FName("MyMatchSession"));
 
-			// CHANGED: Now it waits until the session is completely full (4 players)
-			if (Session && Session->RegisteredPlayers.Num() >= 4)
+			if (Session)
 			{
-				// Stop checking!
-				if (GetWorld())
-				{
-					GetWorld()->GetTimerManager().ClearTimer(PollingTimer);
-				}
+				// The bulletproof way to count players in OSSv1
+				int32 MaxPlayers = Session->SessionSettings.NumPublicConnections;
+				int32 OpenSlots = Session->NumOpenPublicConnections;
+				int32 CurrentPlayers = MaxPlayers - OpenSlots;
 
-				OnStatusChanged.Broadcast(TEXT("Lobby is full! Match is starting..."));
-
-				// Teleport the Host!
-				FString ServerIP = TEXT("10.0.7.4");
-				UEOSLobbySubsystem* Lobby = GetGameInstance()->GetSubsystem<UEOSLobbySubsystem>();
-				if (Lobby)
+				// Check if the lobby has hit 4 players
+				if (CurrentPlayers >= 4)
 				{
-					Lobby->StartGame(ServerIP);
+					// Stop checking!
+					if (GetWorld())
+					{
+						GetWorld()->GetTimerManager().ClearTimer(PollingTimer);
+					}
+
+					OnStatusChanged.Broadcast(TEXT("Lobby is full! Match is starting..."));
+
+					// Teleport the players!
+					FString ServerIP = TEXT("10.0.7.4");
+					UEOSLobbySubsystem* Lobby = GetGameInstance()->GetSubsystem<UEOSLobbySubsystem>();
+					if (Lobby)
+					{
+						Lobby->StartGame(ServerIP);
+					}
 				}
-			}
-			else if (Session)
-			{
-				// Update the UI text dynamically while we wait
-				FString Status = FString::Printf(TEXT("Waiting for players (%d/4)..."), Session->RegisteredPlayers.Num());
-				OnStatusChanged.Broadcast(Status);
+				else
+				{
+					// Update the UI text dynamically with the reliable math
+					FString Status = FString::Printf(TEXT("Waiting for players (%d/%d)..."), CurrentPlayers, MaxPlayers);
+					OnStatusChanged.Broadcast(Status);
+				}
 			}
 		}
 	}
