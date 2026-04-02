@@ -1,252 +1,101 @@
 #include "Network/Client/EOSMatchmakingSubsystem.h"
+#include "Network/Client/EOSIdentitySubsystem.h"
 #include "Network/Client/EOSLobbySubsystem.h"
-#include "OnlineSubsystem.h"
-#include "Interfaces/OnlineSessionInterface.h"
-#include "OnlineSessionSettings.h"
-#include "Engine/LocalPlayer.h"
+
+using namespace UE::Online;
 
 void UEOSMatchmakingSubsystem::FindMatch(int32 PartySize)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] FindMatch called with PartySize: %d"), PartySize);
-	CurrentPartySize = PartySize;
-	OnStatusChanged.Broadcast(TEXT("Searching for matches..."));
-	SearchForSession(PartySize);
+	OnStatusChanged.Broadcast(TEXT("Searching for opponents..."));
+	SearchForLobbies();
 }
 
-void UEOSMatchmakingSubsystem::SearchForSession(int32 SlotsNeeded)
+void UEOSMatchmakingSubsystem::SearchForLobbies()
 {
-	UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] Starting SearchForSession..."));
-	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-	if (Subsystem)
+	IOnlineServicesPtr Services = UE::Online::GetServices();
+	UEOSIdentitySubsystem* Identity = GetGameInstance()->GetSubsystem<UEOSIdentitySubsystem>();
+
+	if (Services && Identity)
 	{
-		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionSearch = MakeShareable(new FOnlineSessionSearch());
-			SessionSearch->bIsLanQuery = false;
-			SessionSearch->MaxSearchResults = 10;
+		ILobbiesPtr Lobbies = Services->GetLobbiesInterface();
+		FFindLobbies::Params Params;
+		Params.LocalAccountId = Identity->GetLocalAccountId();
+		Params.MaxResults = 10;
 
-			SessionSearch->QuerySettings.Set(FName("PRESENCESEARCH"), true, EOnlineComparisonOp::Equals);
-			SessionSearch->QuerySettings.Set(FName("GameMode"), FString("2v2"), EOnlineComparisonOp::Equals);
+		// Find Lobbies tagged as 2v2
+		FFindLobbySearchFilter Filter;
+		Filter.AttributeName = FSchemaAttributeId(TEXT("GameMode"));
+		Filter.ComparisonOp = ESchemaAttributeComparisonOp::Equals;
+		Filter.ComparisonValue = FSchemaVariant(FString(TEXT("2v2")));
+		Params.Filters.Add(Filter);
 
-			SessionInterface->OnFindSessionsCompleteDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnSearchCompleted);
-
-			// --- NEW ID LOGIC ---
-			TSharedPtr<const FUniqueNetId> UserId = GetGameInstance()->GetFirstGamePlayer()->GetPreferredUniqueNetId().GetUniqueNetId();
-			if (UserId.IsValid())
-			{
-				SessionInterface->FindSessions(*UserId, SessionSearch.ToSharedRef());
-				UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] FindSessions request sent to EOS using valid NetId."));
-			}
-		}
-	}
-}
-void UEOSMatchmakingSubsystem::OnSearchCompleted(bool bWasSuccessful)
-{
-	UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] OnSearchCompleted fired! Success: %d"), bWasSuccessful);
-
-	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-	if (Subsystem)
-	{
-		Subsystem->GetSessionInterface()->ClearOnFindSessionsCompleteDelegates(this);
-	}
-
-	bool bFoundValidSession = false;
-
-	if (bWasSuccessful && SessionSearch.IsValid())
-	{
-		UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] Found %d sessions matching the 2v2 criteria."), SessionSearch->SearchResults.Num());
-
-		// Loop through all found sessions to find one with enough empty slots!
-		for (const FOnlineSessionSearchResult& Result : SessionSearch->SearchResults)
-		{
-			if (Result.IsValid() && Result.Session.NumOpenPublicConnections >= CurrentPartySize)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] Found a session with %d open slots! Joining..."), Result.Session.NumOpenPublicConnections);
-				OnStatusChanged.Broadcast(TEXT("Match found! Joining..."));
-
-				JoinFoundSession(Result);
-				bFoundValidSession = true;
-				break; // Stop searching, we found our match!
-			}
-		}
-	}
-
-	// If we found absolutely nothing, OR all found sessions were already full (4/4)
-	if (!bFoundValidSession)
-	{
-		UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] No valid sessions with enough space. Hosting our own..."));
-		OnStatusChanged.Broadcast(TEXT("Hosting new session..."));
-		CreateMatchmakingSession(CurrentPartySize);
+		Lobbies->FindLobbies(MoveTemp(Params)).OnComplete(this, &UEOSMatchmakingSubsystem::OnSearchCompleted);
 	}
 }
 
-void UEOSMatchmakingSubsystem::CreateMatchmakingSession(int32 SlotsNeeded)
+void UEOSMatchmakingSubsystem::OnSearchCompleted(const TOnlineResult<FFindLobbies>& Result)
 {
-	UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] Creating new Matchmaking Session..."));
-	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-	if (Subsystem)
+	if (Result.IsOk() && Result.GetOkValue().Lobbies.Num() > 0)
 	{
-		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			FOnlineSessionSettings SessionSettings;
-			SessionSettings.bIsLANMatch = false;
-			SessionSettings.bShouldAdvertise = true;
-			SessionSettings.bAllowJoinInProgress = true;
-			SessionSettings.NumPublicConnections = 4;
-			SessionSettings.bUsesPresence = true;
-			SessionSettings.bAllowJoinViaPresence = true;
-			SessionSettings.bUseLobbiesIfAvailable = false;
+		OnStatusChanged.Broadcast(TEXT("Match found! Joining..."));
 
-			SessionSettings.Set(FName("GameMode"), FString("2v2"), EOnlineDataAdvertisementType::ViaOnlineService);
+		// We found an opponent's lobby! Let's join it.
+		IOnlineServicesPtr Services = UE::Online::GetServices();
+		UEOSIdentitySubsystem* Identity = GetGameInstance()->GetSubsystem<UEOSIdentitySubsystem>();
 
-			SessionInterface->OnCreateSessionCompleteDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnCreateCompleted);
+		FJoinLobby::Params Params;
+		Params.LocalAccountId = Identity->GetLocalAccountId();
+		Params.LocalName = FName(TEXT("PartyLobby")); // Must match the name in CreateLobby!
+		Params.LobbyId = Result.GetOkValue().Lobbies[0]->LobbyId;
+		Params.bPresenceEnabled = true;
 
-			// --- NEW ID LOGIC ---
-			TSharedPtr<const FUniqueNetId> UserId = GetGameInstance()->GetFirstGamePlayer()->GetPreferredUniqueNetId().GetUniqueNetId();
-			if (UserId.IsValid())
-			{
-				SessionInterface->CreateSession(*UserId, FName("MyMatchSession"), SessionSettings);
-			}
-		}
-	}
-}
-
-void UEOSMatchmakingSubsystem::OnCreateCompleted(FName SessionName, bool bWasSuccessful)
-{
-	UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] OnCreateCompleted fired! Success: %d"), bWasSuccessful);
-
-	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-	if (!Subsystem) return;
-
-	IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
-	SessionInterface->ClearOnCreateSessionCompleteDelegates(this);
-
-	if (bWasSuccessful)
-	{
-		UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] Binding Participant Delegates for HOST..."));
-		SessionInterface->OnSessionParticipantJoinedDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnParticipantJoined);
-		SessionInterface->OnSessionParticipantLeftDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnParticipantLeft);
-
-		UpdateSessionState();
+		Services->GetLobbiesInterface()->JoinLobby(MoveTemp(Params)).OnComplete(this, &UEOSMatchmakingSubsystem::OnJoinCompleted);
 	}
 	else
 	{
-		OnStatusChanged.Broadcast(TEXT("Failed to create session!"));
+		// No opponents found. We will host the match by making our Party Lobby public!
+		MakePartyLobbyPublic();
 	}
 }
 
-void UEOSMatchmakingSubsystem::JoinFoundSession(const FOnlineSessionSearchResult& SearchResult)
+void UEOSMatchmakingSubsystem::MakePartyLobbyPublic()
 {
-	UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] Attempting to Join Found Session..."));
-	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-	if (Subsystem)
-	{
-		IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->OnJoinSessionCompleteDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnJoinCompleted);
+	IOnlineServicesPtr Services = UE::Online::GetServices();
+	UEOSIdentitySubsystem* Identity = GetGameInstance()->GetSubsystem<UEOSIdentitySubsystem>();
+	UEOSLobbySubsystem* LobbySub = GetGameInstance()->GetSubsystem<UEOSLobbySubsystem>();
 
-			// --- NEW ID LOGIC ---
-			TSharedPtr<const FUniqueNetId> UserId = GetGameInstance()->GetFirstGamePlayer()->GetPreferredUniqueNetId().GetUniqueNetId();
-			if (UserId.IsValid())
-			{
-				SessionInterface->JoinSession(*UserId, FName("MyMatchSession"), SearchResult);
-			}
-		}
+	if (Services && Identity && LobbySub->IsInLobby())
+	{
+		FModifyLobbyAttributes::Params Params;
+		Params.LocalAccountId = Identity->GetLocalAccountId();
+		Params.LobbyId = LobbySub->CurrentLobbyId; // Use the Lobby we are already inside!
+
+		// Add the 2v2 tag so others can find us
+		Params.UpdatedAttributes.Add(FSchemaAttributeId(TEXT("GameMode")), FSchemaVariant(FString(TEXT("2v2"))));
+
+		Services->GetLobbiesInterface()->ModifyLobbyAttributes(MoveTemp(Params));
+
+		// Make the lobby Publicly Searchable
+		FModifyLobbyJoinPolicy::Params JoinParams;
+		JoinParams.LocalAccountId = Identity->GetLocalAccountId();
+		JoinParams.LobbyId = LobbySub->CurrentLobbyId;
+		JoinParams.JoinPolicy = ELobbyJoinPolicy::PublicAdvertised;
+
+		Services->GetLobbiesInterface()->ModifyLobbyJoinPolicy(MoveTemp(JoinParams));
+
+		OnStatusChanged.Broadcast(TEXT("Waiting for opponents..."));
 	}
 }
 
-void UEOSMatchmakingSubsystem::OnJoinCompleted(FName SessionName, EOnJoinSessionCompleteResult::Type Result)
+void UEOSMatchmakingSubsystem::OnJoinCompleted(const TOnlineResult<FJoinLobby>& Result)
 {
-	UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] OnJoinCompleted fired! Result Code: %d"), (int32)Result);
-
-	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-	if (!Subsystem) return;
-
-	IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
-	SessionInterface->ClearOnJoinSessionCompleteDelegates(this);
-
-	if (Result == EOnJoinSessionCompleteResult::Success)
+	if (Result.IsOk())
 	{
-		UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] Binding Participant Delegates for JOINER..."));
-		SessionInterface->OnSessionParticipantJoinedDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnParticipantJoined);
-		SessionInterface->OnSessionParticipantLeftDelegates.AddUObject(this, &UEOSMatchmakingSubsystem::OnParticipantLeft);
-
-		UpdateSessionState();
+		OnStatusChanged.Broadcast(TEXT("Successfully joined the match!"));
+		// The teleport is handled automatically by OnLobbyMemberJoined in EOSLobbySubsystem!
 	}
 	else
 	{
 		OnStatusChanged.Broadcast(TEXT("Failed to join match."));
-	}
-}
-
-void UEOSMatchmakingSubsystem::OnParticipantJoined(FName SessionName, const FUniqueNetId& ParticipantId)
-{
-	UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] DELEGATE FIRED: OnParticipantJoined! Someone entered the session."));
-	UpdateSessionState();
-}
-
-void UEOSMatchmakingSubsystem::OnParticipantLeft(FName SessionName, const FUniqueNetId& ParticipantId, EOnSessionParticipantLeftReason Reason)
-{
-	UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] DELEGATE FIRED: OnParticipantLeft! Someone left the session."));
-
-	// Re-run the math to update the UI (e.g., drops from 2/4 back down to 1/4)
-	UpdateSessionState();
-}
-
-void UEOSMatchmakingSubsystem::UpdateSessionState()
-{
-	UE_LOG(LogTemp, Log, TEXT("[MATCHMAKING] Running UpdateSessionState..."));
-
-	IOnlineSubsystem* Subsystem = IOnlineSubsystem::Get();
-	if (!Subsystem) return;
-
-	IOnlineSessionPtr SessionInterface = Subsystem->GetSessionInterface();
-	if (!SessionInterface.IsValid()) return;
-
-	FNamedOnlineSession* Session = SessionInterface->GetNamedSession(FName("MyMatchSession"));
-	if (Session)
-	{
-		int32 MaxPlayers = Session->SessionSettings.NumPublicConnections;
-		int32 OpenSlots = Session->NumOpenPublicConnections;
-		int32 CurrentPlayers = MaxPlayers - OpenSlots;
-
-		// --- THE FIX FOR THE "0/4" HOST DELAY BUG ---
-		// If Epic hasn't registered us yet, force the math to at least include our own party!
-		if (CurrentPlayers < CurrentPartySize)
-		{
-			CurrentPlayers = CurrentPartySize;
-		}
-
-		UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] Session Math -> Max: %d | Open: %d | UI Showing: %d"), MaxPlayers, OpenSlots, CurrentPlayers);
-
-		// --- THE 4-PLAYER TRIGGER ---
-		if (CurrentPlayers >= 4)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("[MATCHMAKING] LOBBY FULL! Triggering Server Travel!"));
-			OnStatusChanged.Broadcast(TEXT("Lobby is full! Match is starting..."));
-
-			SessionInterface->ClearOnSessionParticipantJoinedDelegates(this);
-			SessionInterface->ClearOnSessionParticipantLeftDelegates(this);
-
-			FString ServerIP = TEXT("10.0.7.4");
-			UEOSLobbySubsystem* Lobby = GetGameInstance()->GetSubsystem<UEOSLobbySubsystem>();
-			if (Lobby)
-			{
-				Lobby->StartGame(ServerIP);
-			}
-		}
-		else
-		{
-			// If it is 1/4, 2/4, or 3/4, we just update the UI and wait patiently!
-			FString Status = FString::Printf(TEXT("Waiting for players (%d/%d)..."), CurrentPlayers, MaxPlayers);
-			OnStatusChanged.Broadcast(Status);
-		}
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("[MATCHMAKING] GetNamedSession returned null!"));
 	}
 }
