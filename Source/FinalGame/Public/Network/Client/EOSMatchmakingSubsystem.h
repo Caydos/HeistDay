@@ -4,7 +4,6 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Interfaces/OnlineSessionInterface.h"
 #include "OnlineSessionSettings.h"
-#include "Engine/TimerHandle.h" // Needed for FTimerHandle
 #include "EOSMatchmakingSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMatchmakingStatusChanged, FString, StatusMessage);
@@ -27,14 +26,17 @@ private:
 	void CreateMatchmakingSession(int32 SlotsNeeded);
 	void JoinFoundSession(const FOnlineSessionSearchResult& SearchResult);
 
-	// OSSv1 Callbacks
+	// Core OSSv1 Callbacks
 	void OnSearchCompleted(bool bWasSuccessful);
 	void OnCreateCompleted(FName SessionName, bool bWasSuccessful);
 	void OnJoinCompleted(FName SessionName, EOnJoinSessionCompleteResult::Type Result);
 
-	// NEW: Polling system to check the Epic Bulletin Board
-	void PollSessionSize();
-	FTimerHandle PollingTimer;
+	// THE REAL MATCHMAKING DELEGATES
+	void OnParticipantJoined(FName SessionName, const FUniqueNetId& ParticipantId);
+	void OnParticipantLeft(FName SessionName, const FUniqueNetId& ParticipantId, EOnSessionParticipantLeftReason Reason);
+
+	// Helper function to evaluate the math and trigger travel
+	void UpdateSessionState();
 
 	int32 CurrentPartySize = 1;
 
